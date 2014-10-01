@@ -42,13 +42,13 @@ func (e UncheckedErrors) Error() string {
 // is not checked.
 // If blank is true then assignments to the blank identifier are also considered to be
 // ignored errors.
-func CheckPackage(pkgPath string, ignore map[string]*regexp.Regexp, blank bool) error {
+func CheckPackage(pkgPath string, ignore map[string]*regexp.Regexp, blank, types bool) error {
 	pkg, err := newPackage(pkgPath)
 	if err != nil {
 		return err
 	}
 
-	return checkPackage(pkg, ignore, blank)
+	return checkPackage(pkg, ignore, blank, types)
 }
 
 // package_ represents a single Go package
@@ -157,6 +157,7 @@ type checker struct {
 	pkg    typedPackage
 	ignore map[string]*regexp.Regexp
 	blank  bool
+	types  bool
 
 	errors []error
 }
@@ -274,12 +275,12 @@ func (c *checker) Visit(node ast.Node) ast.Visitor {
 			c.addErrorAtPosition(stmt.Call.Lparen)
 		}
 	case *ast.AssignStmt:
-		if !c.blank {
-			break
-		}
 		if len(stmt.Rhs) == 1 {
 			// single value on rhs; check against lhs identifiers
 			if call, ok := stmt.Rhs[0].(*ast.CallExpr); ok {
+				if !c.blank {
+					break
+				}
 				if c.ignoreCall(call) {
 					break
 				}
@@ -293,6 +294,21 @@ func (c *checker) Visit(node ast.Node) ast.Visitor {
 						}
 					}
 				}
+			} else if assert, ok := stmt.Rhs[0].(*ast.TypeAssertExpr); ok {
+				if !c.types {
+					break
+				}
+				if assert.Type == nil {
+					// type switch
+					break
+				}
+				if len(stmt.Lhs) < 2 {
+					// assertion result not read
+					c.addErrorAtPosition(stmt.Rhs[0].Pos())
+				} else if id, ok := stmt.Lhs[1].(*ast.Ident); ok && c.blank && id.Name == "_" {
+					// assertion result ignored
+					c.addErrorAtPosition(id.NamePos)
+				}
 			}
 		} else {
 			// multiple value on rhs; in this case a call can't return
@@ -300,12 +316,24 @@ func (c *checker) Visit(node ast.Node) ast.Visitor {
 			for i := 0; i < len(stmt.Lhs); i++ {
 				if id, ok := stmt.Lhs[i].(*ast.Ident); ok {
 					if call, ok := stmt.Rhs[i].(*ast.CallExpr); ok {
+						if !c.blank {
+							continue
+						}
 						if c.ignoreCall(call) {
 							continue
 						}
 						if id.Name == "_" && c.callReturnsError(call) {
 							c.addErrorAtPosition(id.NamePos)
 						}
+					} else if assert, ok := stmt.Rhs[i].(*ast.TypeAssertExpr); ok {
+						if !c.types {
+							continue
+						}
+						if assert.Type == nil {
+							// Shouldn't happen anyway, no multi assignment in type switches
+							continue
+						}
+						c.addErrorAtPosition(id.NamePos)
 					}
 				}
 			}
@@ -315,13 +343,13 @@ func (c *checker) Visit(node ast.Node) ast.Visitor {
 	return c
 }
 
-func checkPackage(pkg package_, ignore map[string]*regexp.Regexp, blank bool) error {
+func checkPackage(pkg package_, ignore map[string]*regexp.Regexp, blank, types bool) error {
 	tp, err := typeCheck(pkg)
 	if err != nil {
 		return fmt.Errorf("could not type check: %s", err)
 	}
 
-	visitor := &checker{tp, ignore, blank, []error{}}
+	visitor := &checker{tp, ignore, blank, types, []error{}}
 	for _, astFile := range pkg.astFiles {
 		ast.Walk(visitor, astFile)
 	}
