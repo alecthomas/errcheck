@@ -263,16 +263,16 @@ func (c *checker) Visit(node ast.Node) ast.Visitor {
 	case *ast.ExprStmt:
 		if call, ok := stmt.X.(*ast.CallExpr); ok {
 			if !c.ignoreCall(call) && c.callReturnsError(call) {
-				c.addErrorAtPosition(call.Lparen)
+				c.addErrorAtPosition(call.Pos())
 			}
 		}
 	case *ast.GoStmt:
 		if !c.ignoreCall(stmt.Call) && c.callReturnsError(stmt.Call) {
-			c.addErrorAtPosition(stmt.Call.Lparen)
+			c.addErrorAtPosition(stmt.Call.Pos())
 		}
 	case *ast.DeferStmt:
 		if !c.ignoreCall(stmt.Call) && c.callReturnsError(stmt.Call) {
-			c.addErrorAtPosition(stmt.Call.Lparen)
+			c.addErrorAtPosition(stmt.Call.Pos())
 		}
 	case *ast.AssignStmt:
 		if len(stmt.Rhs) == 1 {
